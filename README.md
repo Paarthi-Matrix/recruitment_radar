@@ -54,7 +54,6 @@ fastapi-foundation/
 │   ├── main.py        # Main entry point for the application
 │   ├── models/        # Pydantic models
 │   ├── routes/        # API routes
-│   └── dependencies/  # Dependency injection
 ├── .gitignore
 ├── requirements.txt   # Python dependencies
 └── README.md
