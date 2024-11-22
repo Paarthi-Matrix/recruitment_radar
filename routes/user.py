@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from models.user_validation import User
+from models.user import User
 from services.user import User
 
 router = APIRouter()
