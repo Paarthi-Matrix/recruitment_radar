@@ -1,13 +1,11 @@
-import enum
-from datetime import datetime
-
 from sqlalchemy import (
     Boolean, Column, DateTime, Enum, Float, ForeignKey, Integer, String, Text
 )
 from sqlalchemy.orm import relationship
-
+import uuid
+from datetime import datetime
+import enum
 from config import Base
-
 
 class UserRole(enum.Enum):
     admin = "Admin"
@@ -30,7 +28,7 @@ class CandidateStatus(enum.Enum):
 class User(Base):
     __tablename__ = "users"
 
-    user_id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     name = Column(String(255), nullable=False)
     email = Column(String(255), unique=True, nullable=False)
     role = Column(Enum(UserRole), nullable=False)
@@ -42,7 +40,7 @@ class User(Base):
 class Candidate(Base):
     __tablename__ = "candidates"
 
-    candidate_id = Column(Integer, primary_key=True, autoincrement=True)
+    candidate_id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     name = Column(String(255), nullable=False)
     email = Column(String(255), unique=True, nullable=True)
     location = Column(String(100), nullable=False)
@@ -58,7 +56,7 @@ class Candidate(Base):
 class Factor(Base):
     __tablename__ = "factors"
 
-    factor_id = Column(Integer, primary_key=True, autoincrement=True)
+    factor_id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     factor_name = Column(String(255), unique=True, nullable=False)
     factor_description = Column(Text, nullable=True)
     factor_type = Column(Enum(FactorType), nullable=False)
@@ -72,9 +70,9 @@ class Factor(Base):
 class CandidateFactor(Base):
     __tablename__ = "candidate_factors"
 
-    candidate_factor_id = Column(Integer, primary_key=True, autoincrement=True)
-    candidate_id = Column(Integer, ForeignKey("candidates.candidate_id"), nullable=False)
-    factor_id = Column(Integer, ForeignKey("factors.factor_id"), nullable=False)
+    candidate_factor_id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    candidate_id = Column(String(36), ForeignKey("candidates.candidate_id"), nullable=False)  # Use String(36) for UUID
+    factor_id = Column(String(36), ForeignKey("factors.factor_id"), nullable=False)  # Use String(36) for UUID
     factor_value = Column(String(255), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 

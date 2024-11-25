@@ -34,3 +34,33 @@ class CandidateCreate(BaseModel):
     target_role: str = Field(..., max_length=255)
     target_industry: str = Field(..., max_length=100)
     status: CandidateStatus
+
+
+class CandidateSchema(BaseModel):
+    candidate_id: str
+    name: str
+    email: Optional[str] = None
+    location: str
+    current_role: str
+    experience_years: float
+    target_role: str
+    target_industry: str
+    status: str
+
+    class Config:
+        orm_mode = True
+
+
+class SearchCandidateRequest(BaseModel):
+    name: str
+
+
+class UpdateCandidateRequest(BaseModel):
+    name: Optional[str] = None
+    email: Optional[str] = None
+    location: Optional[str] = None
+    current_role: Optional[str] = None
+    experience_years: Optional[float] = None
+    target_role: Optional[str] = None
+    target_industry: Optional[str] = None
+    status: Optional[CandidateStatus] = None

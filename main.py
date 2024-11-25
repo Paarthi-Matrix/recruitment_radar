@@ -1,10 +1,12 @@
 from datetime import datetime
+from typing import List
 
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, Query, Path
 from sqlalchemy.orm import Session
 from models.user import User, Candidate
 from passlib.context import CryptContext
-from models.schema import UserCreate, UserLogin, CandidateCreate
+from models.schema import UserCreate, UserLogin, CandidateCreate, CandidateSchema, SearchCandidateRequest, \
+    UpdateCandidateRequest
 from config import SessionLocal, engine, Base
 import uvicorn
 
@@ -80,6 +82,88 @@ def create_candidate(candidate: CandidateCreate, db: Session = Depends(get_db)):
     db.refresh(new_candidate)
 
     return {"message": "Candidate created successfully", "candidate": new_candidate}
+
+
+@app.post("/candidates/search", response_model=List[CandidateSchema])
+def search_candidates_by_name(
+    request: SearchCandidateRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Search for candidates by their name (case-insensitive) using request body.
+
+    Args:
+        request (SearchCandidateRequest): The request body containing the name or partial name.
+        db (Session): The database session dependency.
+
+    Returns:
+        List[CandidateSchema]: A list of candidates matching the search criteria.
+    """
+    candidates = db.query(Candidate).filter(Candidate.name.ilike(f"%{request.name}%")).all()
+
+    if not candidates:
+        raise HTTPException(status_code=404, detail="No candidates found with the given name")
+
+    return candidates
+
+
+@app.get("/candidates", response_model=List[CandidateSchema])
+def get_all_candidates(
+        page: int = Query(1, ge=1, description="Page number (must be 1 or greater)"),
+        size: int = Query(10, ge=1, le=100, description="Number of candidates per page (1-100)"),
+        db: Session = Depends(get_db),
+):
+    """
+    Retrieve all candidates with pagination.
+
+    Args:
+        page (int): The current page number.
+        size (int): The number of candidates per page.
+        db (Session): The database session dependency.
+
+    Returns:
+        List[Candidate]: A list of candidates for the current page.
+    """
+    offset = (page - 1) * size
+    candidates = db.query(Candidate).offset(offset).limit(size).all()
+
+    if not candidates:
+        raise HTTPException(status_code=404, detail="No candidates found")
+
+    return candidates
+
+
+@app.put("/candidates/{candidate_id}", response_model=CandidateSchema)
+def update_candidate(
+    candidate_id: str,
+    request: UpdateCandidateRequest,
+    db: Session = Depends(get_db)  
+):
+    """
+    Update candidate information by ID.
+
+    Args:
+        candidate_id (str): The ID of the candidate to update (UUID format).
+        request (UpdateCandidateRequest): The request body containing fields to update.
+        db (Session): The database session dependency.
+
+    Returns:
+        CandidateSchema: The updated candidate information.
+    """
+    candidate = db.query(Candidate).filter(Candidate.candidate_id == candidate_id).first()
+
+    if not candidate:
+        raise HTTPException(status_code=404, detail="Candidate not found")
+
+    for field, value in request.model_dump(exclude_unset=True).items():
+        setattr(candidate, field, value)
+
+    # Save changes to the database
+    db.commit()
+    db.refresh(candidate)
+
+    return candidate
+
 
 
 if __name__ == "__main__":
