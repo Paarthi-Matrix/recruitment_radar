@@ -2,12 +2,12 @@ from pydantic import BaseModel, EmailStr, Field
 from enum import Enum
 from typing import Optional
 
-from .user import CandidateStatus
+from models.models import CandidateStatus
 
 
 class UserRole(str, Enum):
-    admin = "Admin"
-    recruiter = "Recruiter"
+    admin = "admin"
+    recruiter = "recruiter"
 
 
 class UserCreate(BaseModel):
@@ -15,6 +15,7 @@ class UserCreate(BaseModel):
     email: str
     role: UserRole
     password_hash: str
+    company_id: str
 
     class Config:
         orm_mode = True
@@ -33,7 +34,7 @@ class CandidateCreate(BaseModel):
     experience_years: float
     target_role: str = Field(..., max_length=255)
     target_industry: str = Field(..., max_length=100)
-    status: CandidateStatus
+
 
 
 class CandidateSchema(BaseModel):
