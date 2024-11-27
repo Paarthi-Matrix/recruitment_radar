@@ -8,6 +8,7 @@ from sqlalchemy.orm import relationship
 from db import Base
 
 
+
 class UserRole(enum.Enum):
     admin = "Admin"
     recruiter = "Recruiter"
