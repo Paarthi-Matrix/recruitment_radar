@@ -7,10 +7,10 @@ from fastapi import FastAPI, Depends, HTTPException, Query, Path
 from sqlalchemy.orm import Session
 
 from models.models import Candidate
-from models.schema import CandidateCreate, CandidateSchema, SearchCandidateRequest, \
+from models.schema import CandidateCreate, CandidateSchema, SearchCandidateRequest
 from starlette.responses import StreamingResponse
 
-from models.user import User, Candidate
+from models.user import User
 from passlib.context import CryptContext
 from models.schema import UserCreate, UserLogin, CandidateCreate, CandidateSchema, SearchCandidateRequest, \
     UpdateCandidateRequest
