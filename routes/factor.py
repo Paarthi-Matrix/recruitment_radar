@@ -28,12 +28,10 @@ def list_all_factors(db: Session = Depends(get_db)):
 
 @router.get("/candidates/{candidate_id}")
 def get_candidate_and_factors(candidate_id: str, db: Session = Depends(get_db)):
-    # Fetch candidate
     candidate = db.query(Candidate).filter(Candidate.candidate_id == candidate_id).first()
     if not candidate:
         raise HTTPException(status_code=404, detail="Candidate not found")
 
-    # Fetch candidate factors and associated factor names
     candidate_factors = (
         db.query(CandidateFactor)
         .filter(CandidateFactor.candidate_id == candidate_id)
