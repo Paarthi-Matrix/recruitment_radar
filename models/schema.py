@@ -36,7 +36,6 @@ class CandidateCreate(BaseModel):
     target_industry: str = Field(..., max_length=100)
 
 
-
 class CandidateSchema(BaseModel):
     candidate_id: str
     name: str
@@ -65,3 +64,18 @@ class UpdateCandidateRequest(BaseModel):
     target_role: Optional[str] = None
     target_industry: Optional[str] = None
     status: Optional[CandidateStatus] = None
+
+
+class CandidateCreateResponse(BaseModel):
+    candidate_id: str
+    name: str
+    email: str
+    location: str
+    current_role: str
+    experience_years: float
+    target_role: str
+    target_industry: str
+    status: str
+
+    class Config:
+        orm_mode = True

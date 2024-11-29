@@ -1,13 +1,14 @@
 from datetime import datetime, timedelta
 from typing import List
-
+import uuid
 from fastapi import FastAPI, Depends, HTTPException, Query
 from io import BytesIO
 from fastapi import FastAPI, Depends, HTTPException, Query, Path
 from sqlalchemy.orm import Session
-
-from models.models import Candidate
-from models.schema import CandidateCreate, CandidateSchema, SearchCandidateRequest
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi import FastAPI, UploadFile, Depends, HTTPException
+from models.models import Candidate, CandidateFactor, CandidateStatus
+from models.schema import CandidateCreate, CandidateSchema, SearchCandidateRequest, CandidateCreateResponse
 from starlette.responses import StreamingResponse
 
 from models.user import User
@@ -17,14 +18,19 @@ from models.schema import UserCreate, UserLogin, CandidateCreate, CandidateSchem
 from db import get_db
 import uvicorn
 import pandas as pd
-from utils.jwt_handler import create_access_token
+
+from constant.app_constant import CANDIDATE_FIELDS
+from models.company import CompanyFactor
+from models.factor import Factor
+from routes.user import pwd_context
+from utils.jwt_handler import create_access_token, get_current_company_id
 from utils.dependencies import require_role, get_current_user
 from config import ACCESS_TOKEN_EXPIRE_MINUTES
 
 from routes import company, user, factor
 
 app = FastAPI()
-
+security = HTTPBearer()
 app.include_router(company.router, prefix="/companies", tags=["Companies"])
 app.include_router(user.router, prefix="/users", tags=["Users"])
 app.include_router(factor.router, prefix="/factor", tags=["Factors"])
@@ -130,51 +136,98 @@ def update_candidate(
     for field, value in request.model_dump(exclude_unset=True).items():
         setattr(candidate, field, value)
 
-    # Save changes to the database
     db.commit()
     db.refresh(candidate)
 
     return candidate
 
 
-@app.post("/login/")
-def login_user(user: UserLogin, db: Session = Depends(get_db)):
-    """
-    Authenticate a user and return a JWT token.
-    """
-    db_user = db.query(User).filter(User.email == user.email).first()
-
-    if not db_user or not pwd_context.verify(user.password, db_user.password_hash):
-        raise HTTPException(status_code=401, detail="Invalid email or password")
-
-    token_data = {
-        "sub": db_user.user_id,
-        "role": db_user.role.value,
-    }
-    access_token = create_access_token(
-        data=token_data,
-        expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES),
-    )
-
-    return {"access_token": access_token, "token_type": "bearer"}
-
-
 @app.get("/xlsx")
-def get_excel_data():
-    # Create a DataFrame
-    df = pd.DataFrame(
-        [["Canada", 10], ["USA", 20]],
-        columns=["team", "points"]
-    )
+def get_excel_data(
+        token: str = Depends(get_current_company_id),
+        db: Session = Depends(get_db),
+):
+    company_id = token
+
+    factor_ids = db.query(CompanyFactor.factor_id).filter(
+        CompanyFactor.company_id == company_id
+    ).all()
+    factor_ids = [fid[0] for fid in factor_ids]
+
+    if not factor_ids:
+        raise HTTPException(status_code=404, detail="No factors found for the company.")
+
+    factor_names = db.query(Factor.factor_name).filter(Factor.factor_id.in_(factor_ids)).all()
+    factor_names = [name[0] for name in factor_names]
+
+    columns = CANDIDATE_FIELDS + factor_names
+    df = pd.DataFrame(columns=columns)
+
     buffer = BytesIO()
-    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
         df.to_excel(writer, index=False)
     buffer.seek(0)
+
     return StreamingResponse(
         buffer,
-        media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        headers={"Content-Disposition": "attachment; filename=data.xlsx"}
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=data.xlsx"},
     )
+
+
+@app.post("/upload-candidates", response_model=List[CandidateCreateResponse])
+def upload_candidates(file: UploadFile, db: Session = Depends(get_db)):
+    """
+    Endpoint to process Excel file and insert candidates and their factors.
+    """
+    if not file.filename.endswith(".xlsx"):
+        raise HTTPException(status_code=400, detail="Only .xlsx files are supported")
+
+    contents = file.file.read()
+    df = pd.read_excel(BytesIO(contents))
+
+    CANDIDATE_COLUMNS = [
+        "name", "email", "location", "current_role",
+        "experience_years", "target_role", "target_industry"
+    ]
+    FACTOR_COLUMNS = df.columns[len(CANDIDATE_COLUMNS):]
+
+    candidates_created = []
+
+    for _, row in df.iterrows():
+        candidate_data = {col: row[col] for col in CANDIDATE_COLUMNS}
+        new_candidate = Candidate(
+            candidate_id=str(uuid.uuid4()),
+            **candidate_data,
+            status="Pending",
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow(),
+        )
+        db.add(new_candidate)
+        db.commit()
+        db.refresh(new_candidate)
+
+        for factor_name in FACTOR_COLUMNS:
+            factor = db.query(Factor).filter(Factor.factor_name == factor_name).first()
+            if not factor:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Factor '{factor_name}' does not exist in the database."
+                )
+
+            candidate_factor = CandidateFactor(
+                candidate_factor_id=str(uuid.uuid4()),
+                candidate_id=new_candidate.candidate_id,
+                factor_id=factor.factor_id,
+                factor_value=str(row[factor_name]),
+                created_at=datetime.utcnow(),
+            )
+            db.add(candidate_factor)
+
+        db.commit()
+        candidates_created.append(new_candidate)
+
+    return candidates_created
 
 
 if __name__ == "__main__":

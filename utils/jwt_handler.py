@@ -2,7 +2,7 @@ from datetime import datetime, timedelta
 from jose import jwt, JWTError
 from typing import Optional
 from fastapi import Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordBearer
+from fastapi.security import HTTPBearer
 from jose import JWTError
 from config import settings
 
@@ -44,16 +44,16 @@ def verify_access_token(token: str) -> dict:
         HTTPException: If the token is invalid or expired.
     """
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
         return payload
     except JWTError:
         return None
 
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
+oauth2_scheme = HTTPBearer()
 
 
-def get_current_user(token: str = Depends(oauth2_scheme)):
+def get_current_user(token: str = Depends(HTTPBearer)):
     """
     Get the current authenticated user from the JWT token.
 
@@ -95,3 +95,20 @@ def require_role(allowed_roles: list):
         return user
 
     return role_checker
+
+
+def get_current_company_id(token: str) -> int:
+    """
+    Extracts the company_id from the JWT token.
+
+    :param token: JWT token from the request header.
+    :return: company_id as integer.
+    """
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        company_id = payload.get("company_id")
+        if company_id is None:
+            raise HTTPException(status_code=401, detail="Invalid token: missing company_id.")
+        return company_id
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Could not validate credentials")
