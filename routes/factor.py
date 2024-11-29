@@ -8,7 +8,7 @@ from schemas.factor import FactorCreate, FactorResponse
 from services.factor import create_factor, get_all_factors
 
 from models.factor import Factor
-from models.models import CandidateFactor, Candidate
+from models.candidate import CandidateFactor, Candidate
 
 router = APIRouter()
 

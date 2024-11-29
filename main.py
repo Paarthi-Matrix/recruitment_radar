@@ -1,20 +1,20 @@
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import List
+
 import uuid
-from fastapi import FastAPI, Depends, HTTPException, Query
+from fastapi import FastAPI, Depends, HTTPException, Query, UploadFile
 from io import BytesIO
-from fastapi import FastAPI, Depends, HTTPException, Query, Path
+from fastapi.openapi.utils import get_openapi
 from sqlalchemy.orm import Session
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from fastapi import FastAPI, UploadFile, Depends, HTTPException
-from models.models import Candidate, CandidateFactor, CandidateStatus
-from models.schema import CandidateCreate, CandidateSchema, SearchCandidateRequest, CandidateCreateResponse
+from fastapi.security import HTTPBearer
+from starlette.middleware.cors import CORSMiddleware
+
+from models.candidate import Candidate, CandidateFactor, CandidateStatus
+from models.schema import CandidateCreate, CandidateSchema, SearchCandidateRequest, CandidateCreateResponse, \
+    UpdateCandidateRequest
+
 from starlette.responses import StreamingResponse
 
-from models.user import User
-from passlib.context import CryptContext
-from models.schema import UserCreate, UserLogin, CandidateCreate, CandidateSchema, SearchCandidateRequest, \
-    UpdateCandidateRequest
 from db import get_db
 import uvicorn
 import pandas as pd
@@ -22,27 +22,83 @@ import pandas as pd
 from constant.app_constant import CANDIDATE_FIELDS
 from models.company import CompanyFactor
 from models.factor import Factor
-from routes.user import pwd_context
-from utils.jwt_handler import create_access_token, get_current_company_id
-from utils.dependencies import require_role, get_current_user
-from config import ACCESS_TOKEN_EXPIRE_MINUTES
+from utils.jwt_handler import get_current_company_id
+from utils.dependencies import require_role
 
-from routes import company, user, factor
+from routes import company, user, factor, summary
+from utils.jwt_handler import verify_access_token
 
 app = FastAPI()
 security = HTTPBearer()
 app.include_router(company.router, prefix="/companies", tags=["Companies"])
 app.include_router(user.router, prefix="/users", tags=["Users"])
 app.include_router(factor.router, prefix="/factor", tags=["Factors"])
+app.include_router(summary.router, prefix="/summary", tags=["Summary"])
+
+token_auth_scheme = HTTPBearer()
+
+@app.get("/")
+def read_root():
+    return {"message": "Hello, World!"}
 
 
-@app.post("/candidates/", dependencies=[Depends(require_role(["admin"]))])
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Add your frontend URLs here
+    allow_credentials=True,
+    allow_methods=["*"],  # Allow all HTTP methods (GET, POST, PUT, etc.)
+    allow_headers=["*"],  # Allow all headers
+)
+
+# Your authentication dependency
+def require_jwt_token(token: str = Depends(token_auth_scheme)):
+    # Decode and validate the JWT token here
+    # Raise an exception if invalid
+    return token
+
+# Custom OpenAPI for JWT Authentication in Swagger
+def custom_openapi():
+    if app.openapi_schema:
+        return app.openapi_schema
+    openapi_schema = get_openapi(
+        title="Your API Title",
+        version="1.0.0",
+        description="API using JWT Authentication",
+        routes=app.routes,
+    )
+    openapi_schema["components"]["securitySchemes"] = {
+        "BearerAuth": {
+            "type": "http",
+            "scheme": "bearer",
+            "bearerFormat": "JWT",
+        }
+    }
+    for path in openapi_schema["paths"]:
+        for method in openapi_schema["paths"][path]:
+            openapi_schema["paths"][path][method]["security"] = [{"BearerAuth": []}]
+    app.openapi_schema = openapi_schema
+    return app.openapi_schema
+
+app.openapi = custom_openapi
+
+
+# @app.post("/candidates/", dependencies=[Depends(require_role(["admin"]))])
+@app.post("/candidates/", dependencies=[Depends(verify_access_token)])
 def create_candidate(candidate: CandidateCreate, db: Session = Depends(get_db)):
     if candidate.email:
         db_candidate = db.query(Candidate).filter(Candidate.email == candidate.email).first()
         if db_candidate:
             raise HTTPException(status_code=400, detail="Candidate with this email already exists")
 
+    try:
+        candidate_status = CandidateStatus(candidate.status)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid status value. Allowed values are: {[status.value for status in CandidateStatus]}"
+        )
+
+    print('candidate_status: ', candidate_status)
     new_candidate = Candidate(
         name=candidate.name,
         email=candidate.email,
@@ -51,7 +107,7 @@ def create_candidate(candidate: CandidateCreate, db: Session = Depends(get_db)):
         experience_years=candidate.experience_years,
         target_role=candidate.target_role,
         target_industry=candidate.target_industry,
-        status=candidate.status,
+        status=candidate_status,
         created_at=datetime.now(),
         updated_at=datetime.now()
     )
@@ -136,6 +192,7 @@ def update_candidate(
     for field, value in request.model_dump(exclude_unset=True).items():
         setattr(candidate, field, value)
 
+    # Save changes to the database
     db.commit()
     db.refresh(candidate)
 

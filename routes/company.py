@@ -66,3 +66,42 @@ def add_factors_to_company(
     db.commit()
     return {"message": "Factors successfully added/updated for the company"}
 
+
+@router.get("/companies/{company_id}/factors/")
+def get_company_factors(company_id: str, db: Session = Depends(get_db)):
+    # Verify the company exists
+    company = db.query(Company).filter(Company.company_id == company_id).first()
+    if not company:
+        raise HTTPException(status_code=404, detail="Company not found")
+
+    # Query factors mapped to the company
+    company_factors = (
+        db.query(
+            CompanyFactor.company_factor_id,
+            CompanyFactor.weightage,
+            CompanyFactor.is_active,
+            Factor.factor_id,
+            Factor.factor_name,
+            Factor.factor_description,
+            Factor.is_active.label("factor_is_active"),
+        )
+        .join(Factor, CompanyFactor.factor_id == Factor.factor_id)
+        .filter(CompanyFactor.company_id == company_id)
+        .all()
+    )
+
+    # Format the result
+    factors = [
+        {
+            "company_factor_id": cf.company_factor_id,
+            "factor_id": cf.factor_id,
+            "factor_name": cf.factor_name,
+            "factor_description": cf.factor_description,
+            "weightage": cf.weightage,
+            "company_factor_is_active": cf.is_active,
+            "factor_is_active": cf.factor_is_active,
+        }
+        for cf in company_factors
+    ]
+
+    return {"company_id": company_id, "factors": factors}

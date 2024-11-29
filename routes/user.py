@@ -4,11 +4,13 @@ from fastapi import APIRouter, Depends, HTTPException
 from passlib.context import CryptContext
 from sqlalchemy.orm import Session
 
+from config import settings
 from db import get_db
 from models.company import Company
 from models.schema import UserLogin
 from models.user import User
 from schemas.user import UserCreate
+from utils.jwt_handler import create_access_token
 
 from config import ACCESS_TOKEN_EXPIRE_MINUTES
 from utils.jwt_handler import create_access_token
@@ -26,15 +28,17 @@ def hash_password(password: str) -> str:
 @router.post("/create/")
 def create_user(user: UserCreate, db: Session = Depends(get_db)):
 
-    print('model: ', User)
+    # Check if the email is already registered
     db_user = db.query(User).filter(User.email==user.email).first()
     if db_user:
         raise HTTPException(status_code=400, detail="Email already registered")
 
+    # Check if the company exists
     db_company = db.query(Company).filter(Company.company_id==user.company_id).first()
     if not db_company:
         raise HTTPException(status_code=404, detail="Company not found")
 
+    # Create a new user
     new_user = User(
         name=user.name,
         email=user.email,
@@ -48,7 +52,7 @@ def create_user(user: UserCreate, db: Session = Depends(get_db)):
         db.commit()
         db.refresh(new_user)
     except Exception as e:
-        db.rollback()
+        db.rollback()  # Rollback the transaction in case of an error
         raise HTTPException(status_code=500, detail=f"Failed to create user: {str(e)}")
 
     return {
