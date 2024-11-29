@@ -3,7 +3,6 @@ from jose import jwt, JWTError
 from typing import Optional
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer
-from jose import JWTError
 from config import settings
 
 from models.user import UserRole
