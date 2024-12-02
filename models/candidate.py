@@ -8,11 +8,11 @@ from sqlalchemy.orm import relationship
 from db import Base
 
 
-class CandidateStatus(enum.Enum):
-    pending = "Pending"
-    incomplete = "Incomplete"
-    reviewed = "Reviewed"
-    predictionGenerated = "PredictionGenerated"
+class CandidateStatus(str, enum.Enum):
+    Pending = "pending"
+    Incomplete = "incomplete"
+    Reviewed = "reviewed"
+    Predicting = "predicting"
 
 
 class Candidate(Base):
@@ -44,4 +44,3 @@ class CandidateFactor(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     factor = relationship("Factor", back_populates="candidate_factors")
-

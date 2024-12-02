@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import List
+from typing import List, Optional
 
 import uuid
 from fastapi import FastAPI, Depends, HTTPException, Query, UploadFile
@@ -20,13 +20,15 @@ import uvicorn
 import pandas as pd
 
 from constant.app_constant import CANDIDATE_FIELDS
-from models.company import CompanyFactor
+from models.company import CompanyFactor, Company
 from models.factor import Factor
+from models.summary import Summary
 from utils.jwt_handler import get_current_company_id
-from utils.dependencies import require_role
+from utils.dependencies import require_role, get_current_user
 
 from routes import company, user, factor, summary
 from utils.jwt_handler import verify_access_token
+from predict.scripts.predict import inference
 
 app = FastAPI()
 security = HTTPBearer()
@@ -36,6 +38,7 @@ app.include_router(factor.router, prefix="/factor", tags=["Factors"])
 app.include_router(summary.router, prefix="/summary", tags=["Summary"])
 
 token_auth_scheme = HTTPBearer()
+
 
 @app.get("/")
 def read_root():
@@ -50,11 +53,13 @@ app.add_middleware(
     allow_headers=["*"],  # Allow all headers
 )
 
+
 # Your authentication dependency
 def require_jwt_token(token: str = Depends(token_auth_scheme)):
     # Decode and validate the JWT token here
     # Raise an exception if invalid
     return token
+
 
 # Custom OpenAPI for JWT Authentication in Swagger
 def custom_openapi():
@@ -79,26 +84,28 @@ def custom_openapi():
     app.openapi_schema = openapi_schema
     return app.openapi_schema
 
+
 app.openapi = custom_openapi
 
 
-# @app.post("/candidates/", dependencies=[Depends(require_role(["admin"]))])
 @app.post("/candidates/", dependencies=[Depends(verify_access_token)])
 def create_candidate(candidate: CandidateCreate, db: Session = Depends(get_db)):
-    if candidate.email:
-        db_candidate = db.query(Candidate).filter(Candidate.email == candidate.email).first()
-        if db_candidate:
-            raise HTTPException(status_code=400, detail="Candidate with this email already exists")
-
     try:
-        candidate_status = CandidateStatus(candidate.status)
-    except ValueError:
+        if candidate.email:
+            db_candidate = db.query(Candidate).filter(Candidate.email.ilike(candidate.email)).first()
+            if db_candidate:
+                raise HTTPException(status_code=400, detail="Candidate with this email already exists")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="An error occurred while checking for existing candidates")
+
+    # Determine the candidate status
+    candidate_status = candidate.status
+    if candidate_status not in [status.value for status in CandidateStatus]:
         raise HTTPException(
             status_code=400,
             detail=f"Invalid status value. Allowed values are: {[status.value for status in CandidateStatus]}"
         )
 
-    print('candidate_status: ', candidate_status)
     new_candidate = Candidate(
         name=candidate.name,
         email=candidate.email,
@@ -115,51 +122,36 @@ def create_candidate(candidate: CandidateCreate, db: Session = Depends(get_db)):
     db.add(new_candidate)
     db.commit()
     db.refresh(new_candidate)
+
     return {"message": "Candidate created successfully", "candidate_id": new_candidate.candidate_id}
 
 
-@app.post("/candidates/search", response_model=List[CandidateSchema], dependencies=[Depends(require_role(["admin"]))])
-def search_candidates_by_name(
-        request: SearchCandidateRequest,
-        db: Session = Depends(get_db)
-):
-    """
-    Search for candidates by their name (case-insensitive) using request body.
-
-    Args:
-        request (SearchCandidateRequest): The request body containing the name or partial name.
-        db (Session): The database session dependency.
-
-    Returns:
-        List[CandidateSchema]: A list of candidates matching the search criteria.
-    """
-    candidates = db.query(Candidate).filter(Candidate.name.ilike(f"%{request.name}%")).all()
-
-    if not candidates:
-        raise HTTPException(status_code=404, detail="No candidates found with the given name")
-
-    return candidates
-
-
-@app.get("/candidates", response_model=List[CandidateSchema], dependencies=[Depends(require_role(["admin"]))])
-def get_all_candidates(
+@app.get("/candidates", response_model=List[CandidateSchema], dependencies=[Depends(require_role(["Admin"]))])
+def get_candidates(
+        name: Optional[str] = Query(None, description="Name or partial name of the candidate to search for"),
         page: int = Query(1, ge=1, description="Page number (must be 1 or greater)"),
         size: int = Query(10, ge=1, le=100, description="Number of candidates per page (1-100)"),
         db: Session = Depends(get_db),
 ):
     """
-    Retrieve all candidates with pagination.
+    Retrieve all candidates with pagination, or search for candidates by name.
 
     Args:
+        name (str, optional): The name or partial name of the candidate to search for.
         page (int): The current page number.
         size (int): The number of candidates per page.
         db (Session): The database session dependency.
 
     Returns:
-        List[Candidate]: A list of candidates for the current page.
+        List[CandidateSchema]: A list of candidates matching the search criteria or all candidates.
     """
+    query = db.query(Candidate)
+
+    if name:
+        query = query.filter(Candidate.name.ilike(f"%{name}%"))
+
     offset = (page - 1) * size
-    candidates = db.query(Candidate).offset(offset).limit(size).all()
+    candidates = query.offset(offset).limit(size).all()
 
     if not candidates:
         raise HTTPException(status_code=404, detail="No candidates found")
@@ -204,6 +196,24 @@ def get_excel_data(
         token: str = Depends(get_current_company_id),
         db: Session = Depends(get_db),
 ):
+    """
+      Endpoint to generate and download an Excel template for candidate data.
+
+      This endpoint retrieves the factors associated with the given company ID,
+      combines them with predefined candidate fields, and generates an Excel file
+      with these as column headers. The file is returned as a downloadable response.
+
+      Args:
+          token (str): The token containing the current company's ID, provided via dependency injection.
+          db (Session): Database session provided via dependency injection.
+
+      Returns:
+          StreamingResponse: A downloadable Excel file containing the candidate fields
+          and company-specific factor names as column headers.
+
+      Raises:
+          HTTPException: If no factors are found for the provided company ID.
+      """
     company_id = token
 
     factor_ids = db.query(CompanyFactor.factor_id).filter(
@@ -232,11 +242,12 @@ def get_excel_data(
     )
 
 
-@app.post("/upload-candidates", response_model=List[CandidateCreateResponse])
-def upload_candidates(file: UploadFile, db: Session = Depends(get_db)):
+@app.post("/upload-candidates")
+def upload_candidates(file: UploadFile, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     """
     Endpoint to process Excel file and insert candidates and their factors.
     """
+    global result
     if not file.filename.endswith(".xlsx"):
         raise HTTPException(status_code=400, detail="Only .xlsx files are supported")
 
@@ -248,9 +259,9 @@ def upload_candidates(file: UploadFile, db: Session = Depends(get_db)):
         "experience_years", "target_role", "target_industry"
     ]
     FACTOR_COLUMNS = df.columns[len(CANDIDATE_COLUMNS):]
-
+    company_id = current_user.get('company_id')
+    company_name = db.query(Company).filter(Company.company_id == company_id).first()
     candidates_created = []
-
     for _, row in df.iterrows():
         candidate_data = {col: row[col] for col in CANDIDATE_COLUMNS}
         new_candidate = Candidate(
@@ -283,8 +294,46 @@ def upload_candidates(file: UploadFile, db: Session = Depends(get_db)):
 
         db.commit()
         candidates_created.append(new_candidate)
+    factors_items = (
+        db.query(Factor.factor_name, CompanyFactor.weightage)
+        .join(CompanyFactor, Factor.factor_id == CompanyFactor.factor_id)
+        .filter(CompanyFactor.company_id == company_id, CompanyFactor.is_active == True)
+        .all()
+    )
+    factors = [item[0] for item in factors_items]
+    weightages = [item[1] for item in factors_items]
+    result = inference(company_name, df, factors, weightages)
 
-    return candidates_created
+    # Parse model's JSON response
+    model_response = result.to_dict()
+    scores = model_response.get("Expected_Joining_Score", {})
+    summaries = model_response.get("Summary", {})
+
+    for idx, candidate in enumerate(candidates_created):
+        candidate_id = candidate.candidate_id
+        raw_score = scores.get(idx, 0)
+        percentage_score = round((raw_score / 1000) * 100, 1)
+        summary_text = summaries.get(idx, "")
+
+        new_summary = Summary(
+            prediction_id=str(uuid.uuid4()),
+            candidate_id=candidate_id,
+            probability_percentage=percentage_score,
+            probability_summary=summary_text,
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow()
+        )
+        db.add(new_summary)
+
+    db.commit()
+
+    for candidate in candidates_created:
+        candidate.status = CandidateStatus.Reviewed.value
+        candidate.updated_at = datetime.utcnow()
+        db.add(candidate)
+
+    db.commit()
+    return {"Operation success"}
 
 
 if __name__ == "__main__":

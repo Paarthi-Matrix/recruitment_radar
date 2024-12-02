@@ -46,7 +46,7 @@ class CandidateSchema(BaseModel):
     experience_years: float
     target_role: str
     target_industry: str
-    status: str
+    status: Optional[str] = None
 
     class Config:
         orm_mode = True

@@ -1,17 +1,17 @@
 from fastapi import Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordBearer, HTTPBearer
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 from .jwt_handler import verify_access_token
 
 oauth2_scheme = HTTPBearer()
 
 
-def get_current_user(token: str = Depends(oauth2_scheme)):
+def get_current_user(token: HTTPAuthorizationCredentials = Depends(oauth2_scheme)):
     """
     Get the current authenticated user from the JWT token.
 
     Args:
-        token (str): The JWT token.
+        token (HTTPAuthorizationCredentials): The authorization credentials object.
 
     Returns:
         dict: The user information.
@@ -19,7 +19,11 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
     Raises:
         HTTPException: If the token is invalid or expired.
     """
-    payload = verify_access_token(token)
+    # Extract the actual token string
+    token_str = token.credentials
+
+    # Verify the token
+    payload = verify_access_token(token_str)
     if not payload:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
